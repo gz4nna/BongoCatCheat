@@ -13,7 +13,58 @@ public class Program
     private const string NotepadWindowClassName = "Notepad";
     private const int RestoreWindowCommand = 9;
 
+    private const uint InputKeyboard = 1;
+    private const uint KeyEventKeyUp = 0x0002;
+    private const uint KeyEventScanCode = 0x0008;
+
+    // F13 ~ F24，标准键盘上不存在、不产生字符、无需焦点
+    private static readonly ushort[] FunctionKeys =
+    {
+        0x7C, 0x7D, 0x7E, 0x7F, 0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,
+    };
+
     private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr parameter);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input
+    {
+        public uint type;
+        public InputUnion union;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [FieldOffset(0)] public KeyboardInput keyboard;
+        [FieldOffset(0)] public MouseInput mouse;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KeyboardInput
+    {
+        public ushort virtualKey;
+        public ushort scanCode;
+        public uint flags;
+        public uint time;
+        public IntPtr extraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public IntPtr extraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
+
+    [DllImport("user32.dll")]
+    private static extern uint MapVirtualKey(uint code, uint mapType);
 
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
@@ -31,6 +82,41 @@ public class Program
     private static extern bool SetForegroundWindow(IntPtr windowHandle);
 
     static async Task Main(string[] args)
+    {
+        if (args.Contains("--legacy"))
+        {
+            await RunLegacyModeAsync();
+            return;
+        }
+
+        await RunFunctionKeyModeAsync();
+    }
+
+    private static async Task RunFunctionKeyModeAsync()
+    {
+        while (true)
+        {
+            SendFunctionKeys(keyUp: false);
+            await Task.Delay(100);
+            SendFunctionKeys(keyUp: true);
+            await Task.Delay(50);
+        }
+    }
+
+    private static void SendFunctionKeys(bool keyUp)
+    {
+        var inputs = new Input[FunctionKeys.Length];
+        for (var i = 0; i < FunctionKeys.Length; i++)
+        {
+            inputs[i].type = InputKeyboard;
+            inputs[i].union.keyboard.scanCode = (ushort)MapVirtualKey(FunctionKeys[i], 0);
+            inputs[i].union.keyboard.flags = KeyEventScanCode | (keyUp ? KeyEventKeyUp : 0);
+        }
+
+        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+    }
+
+    private static async Task RunLegacyModeAsync()
     {
         System.Diagnostics.Process.Start("notepad.exe");
 
